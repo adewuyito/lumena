@@ -30,11 +30,6 @@ env:
   CARGO_TERM_COLOR: always
   WASM_TARGET: wasm32-unknown-unknown
   SIZE_BUDGET_BYTES: 65536
-  CONTRACT_CRATES: >-
-    contracts/paymaster
-    contracts/session-keys
-    contracts/social-recovery
-    contracts/token-sep41
 
 jobs:
   lint-and-audit:
@@ -88,6 +83,12 @@ jobs:
 
   build-contracts:
     name: Build, Optimize & Export Contracts
+    needs: discover-contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.discover-contracts.outputs.crates) }}
+    name: Build, Optimize & Export Contracts
     runs-on: ubuntu-latest
 
     steps:
@@ -125,25 +126,21 @@ jobs:
       - name: Run contract unit tests
         run: cargo test --workspace --all-features
 
-      - name: Build contracts (wasm32 release)
-        run: cargo build --workspace --target ${{ env.WASM_TARGET }} --release
+      - name: Build contract (wasm32 release)
+        run: cargo build --package "${{ matrix.crate }}" --target ${{ env.WASM_TARGET }} --release
 
-      - name: Run contract tests
-        run: cargo test --workspace
-
-      - name: Optimize WASM binaries and enforce size budget
+      - name: Optimize WASM binary and enforce size budget
         id: optimize
         run: |
           set -euo pipefail
           mkdir -p artifacts/wasm
           shopt -s nullglob
+          wasm_files=(target/${WASM_TARGET}/release/*.wasm)
+          if [ ${#wasm_files[@]} -eq 0 ]; then
+            echo "::error::No WASM binary was produced for ${{ matrix.crate }}."
+            exit 1
+          fi
           failed=0
-          for contract in "${expected_contracts[@]}"; do
-            if [ ! -f "target/${WASM_TARGET}/release/${contract}.wasm" ]; then
-              echo "::error::Expected WASM binary for ${contract} was not produced by the build."
-              failed=1
-            fi
-          done
           for wasm in "${wasm_files[@]}"; do
             name="$(basename "$wasm")"
             out="artifacts/wasm/${name}"
@@ -155,18 +152,6 @@ jobs:
               echo "::error file=${out}::${name} exceeds the 64KB size budget (${size} > ${SIZE_BUDGET_BYTES} bytes)."
               failed=1
             fi
-            for wasm in "${wasm_files[@]}"; do
-              name="$(basename "$wasm")"
-              out="artifacts/wasm/${name}"
-              echo "Optimizing ${name}..."
-              wasm-opt -Oz "$wasm" -o "$out"
-              size=$(stat -c%s "$out")
-              echo "${name}: ${size} bytes"
-              if [ "$size" -gt "${SIZE_BUDGET_BYTES}" ]; then
-                echo "::error file=${out}::${name} exceeds the 64KB size budget (${size} > ${SIZE_BUDGET_BYTES} bytes)."
-                failed=1
-              fi
-            done
           done
           if [ "$failed" -ne 0 ]; then
             echo "::error::One or more WASM binaries exceed the 64KB size budget."
@@ -197,7 +182,10 @@ jobs:
             echo "::error::No optimized WASM binaries available for ABI export."
             exit 1
           fi
-          expected_contracts=(policy_guard oracle_spend_limit proxy inheritance)
+          expected_contracts=()
+          for wasm in "${wasm_files[@]}"; do
+            expected_contracts+=("$(basename "$wasm" .wasm)")
+          done
           for contract in "${expected_contracts[@]}"; do
             if [ ! -f "artifacts/wasm/${contract}.wasm" ]; then
               echo "::error::Missing optimized WASM for ${contract}; cannot generate TypeScript bindings."
@@ -233,13 +221,13 @@ jobs:
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: contracts-wasm
+          name: contracts-wasm-${{ matrix.crate }}
           path: artifacts/wasm/*.wasm
           if-no-files-found: error
 
       - name: Upload TypeScript interface definitions
         uses: actions/upload-artifact@v4
         with:
-          name: contracts-typescript
+          name: contracts-typescript-${{ matrix.crate }}
           path: artifacts/typescript/**
           if-no-files-found: error

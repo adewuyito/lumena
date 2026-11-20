@@ -370,6 +370,66 @@ mod test {
     }
 
     #[test]
+    fn test_claim_boundary_deadline_and_deadline_plus_one() {
+        let (env, client, _owner, beneficiary) = setup();
+
+        // t == deadline (last_heartbeat + dormancy_period): still active.
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+        assert!(!client.is_claimable());
+        assert_eq!(
+            client.try_claim(),
+            Err(Ok(Error::HeartbeatActive))
+        );
+        assert!(!client.is_claimed());
+
+        // t == deadline + 1: claim succeeds.
+        env.ledger().with_mut(|li| li.timestamp = 1001);
+        assert!(client.is_claimable());
+        assert_eq!(client.claim(), beneficiary);
+        assert!(client.is_claimed());
+    }
+
+    #[test]
+    fn test_claim_boundary_after_heartbeat() {
+        let (env, client, _owner, _beneficiary) = setup();
+
+        env.ledger().with_mut(|li| li.timestamp = 500);
+        client.heartbeat();
+
+        // deadline = 500 + 1000 = 1500.
+        env.ledger().with_mut(|li| li.timestamp = 1500);
+        assert!(!client.is_claimable());
+        assert_eq!(client.try_claim(), Err(Ok(Error::HeartbeatActive)));
+
+        env.ledger().with_mut(|li| li.timestamp = 1501);
+        assert!(client.is_claimable());
+        assert!(client.claim().is_ok());
+    }
+
+    #[test]
+    fn test_double_claim_rejected_with_already_claimed() {
+        let (env, client, _owner, beneficiary) = setup();
+
+        env.ledger().with_mut(|li| li.timestamp = 1001);
+        assert_eq!(client.claim(), beneficiary);
+
+        // Second claim attempt is rejected.
+        assert_eq!(client.try_claim(), Err(Ok(Error::AlreadyClaimed)));
+        assert!(client.is_claimed());
+        assert_eq!(client.get_owner(), beneficiary);
+    }
+
+    #[test]
+    fn test_heartbeat_after_claim_rejected() {
+        let (env, client, _owner, _beneficiary) = setup();
+
+        env.ledger().with_mut(|li| li.timestamp = 1001);
+        client.claim();
+
+        assert_eq!(client.try_heartbeat(), Err(Ok(Error::AlreadyClaimed)));
+    }
+
+    #[test]
     fn test_is_claimable() {
         let (env, client, _owner, _beneficiary) = setup();
 

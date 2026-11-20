@@ -14,6 +14,7 @@ import {
   verifyRegistrationResponse,
   WebAuthnRegistrationOptions,
 } from './webauthn';
+import { resolveJwtKeySet, signJwt, type JwtKeySet } from './jwt-keys';
 
 /**
  * SEP-10 Web Authentication Protocol implementation.
@@ -47,12 +48,12 @@ function getNetworkPassphrase(): string {
   return resolveNetwork(process.env.LUMEN_NETWORK ?? 'testnet').networkPassphrase;
 }
 
-function getJwtSecret(): string {
-  const secret = process.env.LUMEN_JWT_SECRET;
-  if (!secret) {
-    throw new Error('LUMEN_JWT_SECRET environment variable is not set');
+function getJwtKeySet(): JwtKeySet {
+  const keySet = resolveJwtKeySet();
+  if (!keySet) {
+    throw new Error('LUMEN_JWT_KEYS (or LUMEN_JWT_SECRET) environment variable is not set');
   }
-  return secret;
+  return keySet;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,17 +305,13 @@ export function issueToken(account: string): TokenResult {
     throw new Error('account is required');
   }
 
-  const token = jwt.sign(
+  const token = signJwt(
     {
       sub: account,
       iss: 'lumen',
-      iat: Math.floor(Date.now() / 1000),
     },
-    getJwtSecret(),
-    {
-      algorithm: 'HS256',
-      expiresIn: JWT_TTL_SECONDS,
-    },
+    getJwtKeySet(),
+    JWT_TTL_SECONDS,
   );
 
   return { token, expires_in: JWT_TTL_SECONDS };

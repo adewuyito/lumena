@@ -97,6 +97,11 @@ export {
 export { toScVal, fromScVal, sc } from "./soroban/scval.js";
 export { ContractClient } from "./soroban/client.js";
 export {
+  paymaster,
+  sessionKeys,
+  type SessionKeyRecord,
+} from "./soroban/bindings.js";
+export {
   Sep24Client,
   type Sep24AssetInfo,
   type Sep24Info,
