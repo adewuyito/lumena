@@ -48,11 +48,13 @@ impl SmartAccount {
 
         // Weights are summed in u64 so no combination of u32 weights can overflow.
         let mut total_weight: u64 = 0;
+        let mut signer_count: u32 = 0;
         for (_, weight) in signers.iter() {
             if weight == 0 {
                 return Err(Error::InvalidWeight);
             }
             total_weight += weight as u64;
+            signer_count += 1;
         }
         if threshold == 0 || total_weight < threshold as u64 {
             return Err(Error::InvalidThreshold);
@@ -60,6 +62,14 @@ impl SmartAccount {
 
         storage.set(&DataKey::Signers, &signers);
         storage.set(&DataKey::Threshold, &threshold);
+
+        event_schema::publish(
+            &env,
+            Symbol::new(&env, "smart_account"),
+            Symbol::new(&env, "init"),
+            &env.current_contract_address(),
+            (signer_count, threshold),
+        );
         Ok(())
     }
 
@@ -200,3 +210,6 @@ impl CustomAccountInterface for SmartAccount {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test;

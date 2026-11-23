@@ -21,8 +21,12 @@ this layout.
 
 ## Payload schemas
 
-| Contract        | Action     | Wallet topic        | Payload (`ScVal`)                                                  |
-| --------------- | ---------- | ------------------- | ------------------------------------------------------------------ |
-| `smart_account` | `transfer` | Smart account       | `ScvVec[token: ScvAddress, to: ScvAddress, amount: ScvI128]`       |
-| `sbt_identity`  | `mint`     | Credential holder   | `ScvVec[issuer: ScvAddress, expires_at: ScvU64]`                   |
-| `sbt_identity`  | `revoke`   | Credential holder   | `issuer: ScvAddress`                                               |
+| Contract        | Action             | Wallet topic        | Payload (`ScVal`)                                                  |
+| --------------- | ------------------ | ------------------- | ------------------------------------------------------------------ |
+| `smart_account` | `init`             | Smart account       | `ScvVec[signer_count: ScvU32, threshold: ScvU32]`                  |
+| `smart_account` | `transfer`         | Smart account       | `ScvVec[token: ScvAddress, to: ScvAddress, amount: ScvI128]`       |
+| `session_keys`  | `register`         | Session key owner   | `ScvVec[session_key: ScvAddress, valid_until: ScvU64]`             |
+| `session_keys`  | `revoke`           | Session key owner   | `session_key: ScvAddress`                                          |
+| `session_keys`  | `validate_failure` | Session key         | `ScvVec[target: ScvAddress, method: ScvSymbol, amount: ScvI128]`   |
+| `sbt_identity`  | `mint`             | Credential holder   | `ScvVec[issuer: ScvAddress, expires_at: ScvU64]`                   |
+| `sbt_identity`  | `revoke`           | Credential holder   | `issuer: ScvAddress`                                               |

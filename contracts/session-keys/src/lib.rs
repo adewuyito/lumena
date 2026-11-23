@@ -25,6 +25,8 @@ pub enum DataKey {
     Session(Address, Address),
     /// Index: session_key -> owner (for validate lookup).
     OwnerIndex(Address),
+    /// Maximum session key lifetime in seconds, configured at init.
+    MaxTtl,
 }
 
 /// Semantic version of this contract, kept in sync with `Cargo.toml`.
@@ -38,6 +40,14 @@ impl SessionKeysContract {
     /// Returns the contract version.
     pub fn version(_env: Env) -> u32 {
         CONTRACT_VERSION
+    }
+
+    /// Configure the maximum session key lifetime, in seconds.
+    pub fn initialize(env: Env, max_ttl: u64) {
+        if env.storage().instance().has(&DataKey::MaxTtl) {
+            panic!("session keys already initialized");
+        }
+        env.storage().instance().set(&DataKey::MaxTtl, &max_ttl);
     }
 
     /// Register a new session key for `owner`. Requires owner authorization.
@@ -57,6 +67,17 @@ impl SessionKeysContract {
             panic!("session key already registered");
         }
 
+        // Reject expiries beyond the configured maximum lifetime.
+        let now = env.ledger().timestamp();
+        let max_ttl: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxTtl)
+            .unwrap_or(u64::MAX);
+        if valid_until > now.saturating_add(max_ttl) {
+            panic!("session key expiry exceeds max_ttl");
+        }
+
         let record = SessionKey {
             valid_until,
             allowed_contracts,
@@ -69,21 +90,37 @@ impl SessionKeysContract {
         // Write reverse index so validate_session_call can find the owner.
         env.storage()
             .persistent()
-            .set(&DataKey::OwnerIndex(session_key), &owner);
+            .set(&DataKey::OwnerIndex(session_key.clone()), &owner);
+
+        event_schema::publish(
+            &env,
+            Symbol::new(&env, "session_keys"),
+            Symbol::new(&env, "register"),
+            &owner,
+            (session_key, valid_until),
+        );
     }
 
     /// Revoke an existing session key. Requires owner authorization.
     pub fn revoke_session_key(env: Env, owner: Address, session_key: Address) {
         owner.require_auth();
 
-        let key = DataKey::Session(owner, session_key.clone());
+        let key = DataKey::Session(owner.clone(), session_key.clone());
         if !env.storage().persistent().has(&key) {
             panic!("session key not found");
         }
         env.storage().persistent().remove(&key);
         env.storage()
             .persistent()
-            .remove(&DataKey::OwnerIndex(session_key));
+            .remove(&DataKey::OwnerIndex(session_key.clone()));
+
+        event_schema::publish(
+            &env,
+            Symbol::new(&env, "session_keys"),
+            Symbol::new(&env, "revoke"),
+            &owner,
+            session_key,
+        );
     }
 
     /// Validate a call made by `session_key` against `target` invoking `method`
@@ -93,6 +130,27 @@ impl SessionKeysContract {
         session_key: Address,
         target: Address,
         method: Symbol,
+        amount: i128,
+    ) -> bool {
+        let allowed = Self::check_session_call(&env, &session_key, &target, &method, amount);
+        if !allowed {
+            event_schema::publish(
+                &env,
+                Symbol::new(&env, "session_keys"),
+                Symbol::new(&env, "validate_failure"),
+                &session_key,
+                (target, method, amount),
+            );
+        }
+        allowed
+    }
+
+    /// Check a session call against its record, updating cumulative spend.
+    fn check_session_call(
+        env: &Env,
+        session_key: &Address,
+        target: &Address,
+        method: &Symbol,
         amount: i128,
     ) -> bool {
         let owner = match env
@@ -117,12 +175,12 @@ impl SessionKeysContract {
         }
 
         // Reject unlisted targets.
-        if !record.allowed_contracts.contains(&target) {
+        if !record.allowed_contracts.contains(target) {
             return false;
         }
 
         // Reject unlisted methods.
-        if !record.allowed_methods.contains(&method) {
+        if !record.allowed_methods.contains(method) {
             return false;
         }
 
@@ -139,3 +197,6 @@ impl SessionKeysContract {
         true
     }
 }
+
+#[cfg(test)]
+mod test;
