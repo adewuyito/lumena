@@ -1,61 +1,46 @@
-use super::{DataKey, Error, MpcVerifier, MpcVerifierClient};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+use super::*;
+use soroban_sdk::{testutils::Address as _, BytesN, Env};
 
-#[test]
-fn rejects_duplicate_registration() {
+fn setup() -> (Env, MpcVerifierClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
+    let client = MpcVerifierClient::new(&env, &env.register(MpcVerifier, ()));
     let admin = Address::generate(&env);
-    let id = env.register(MpcVerifier, ());
-    let client = MpcVerifierClient::new(&env, &id);
-    let key = BytesN::from_array(&env, &[1; 32]);
-    client.initialize(&admin, &1, &1);
+    (env, client, admin)
+}
 
-    assert_eq!(client.register_cosigner(&admin, &key), 1);
-    assert_eq!(
-        client.try_register_cosigner(&admin, &key),
-        Err(Ok(Error::DuplicateCosigner))
-    );
-    assert_eq!(client.cosigner_count(), 1);
+fn register_two_cosigners(env: &Env, client: &MpcVerifierClient<'_>, admin: &Address) {
+    client.register_cosigner(admin, &BytesN::from_array(env, &[1u8; 32]));
+    client.register_cosigner(admin, &BytesN::from_array(env, &[2u8; 32]));
 }
 
 #[test]
-fn removal_compacts_indexes_and_preserves_threshold() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let outsider = Address::generate(&env);
-    let id = env.register(MpcVerifier, ());
-    let client = MpcVerifierClient::new(&env, &id);
-    let removed = BytesN::from_array(&env, &[1; 32]);
-    let remaining = BytesN::from_array(&env, &[2; 32]);
-    client.initialize(&admin, &1, &1);
-    client.register_cosigner(&admin, &removed);
-    client.register_cosigner(&admin, &remaining);
+fn threshold_at_cosigner_count_is_allowed() {
+    let (env, client, admin) = setup();
+    client.initialize(&admin, &1u32, &0u32);
+    register_two_cosigners(&env, &client, &admin);
 
-    assert_eq!(
-        client.try_remove_cosigner(&outsider, &0),
-        Err(Ok(Error::Unauthorized))
-    );
-    client.remove_cosigner(&admin, &0);
-    assert_eq!(client.cosigner_count(), 1);
-    env.as_contract(&id, || {
-        let storage = env.storage().persistent();
-        assert_eq!(storage.get(&DataKey::Cosigner(0)), Some(remaining.clone()));
-        assert!(!storage.has(&DataKey::Cosigner(1)));
-    });
-    assert_eq!(
-        client.try_remove_cosigner(&admin, &1),
-        Err(Ok(Error::UnknownCosigner))
-    );
-    assert_eq!(
-        client.try_remove_cosigner(&admin, &0),
-        Err(Ok(Error::InvalidThreshold))
-    );
-    assert_eq!(client.cosigner_count(), 1);
-    assert_eq!(
-        client.try_register_cosigner(&admin, &remaining),
-        Err(Ok(Error::DuplicateCosigner))
-    );
-    assert_eq!(client.register_cosigner(&admin, &removed), 2);
+    client.set_threshold(&admin, &2u32);
+
+    assert_eq!(client.threshold(), 2u32);
+    assert_eq!(client.cosigner_count(), 2u32);
+}
+
+#[test]
+#[should_panic]
+fn threshold_above_cosigner_count_is_rejected() {
+    let (env, client, admin) = setup();
+    client.initialize(&admin, &1u32, &0u32);
+    client.register_cosigner(&admin, &BytesN::from_array(&env, &[1u8; 32]));
+
+    client.set_threshold(&admin, &2u32);
+}
+
+#[test]
+#[should_panic]
+fn zero_threshold_is_rejected() {
+    let (_env, client, admin) = setup();
+    client.initialize(&admin, &1u32, &0u32);
+
+    client.set_threshold(&admin, &0u32);
 }

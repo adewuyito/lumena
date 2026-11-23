@@ -165,6 +165,17 @@ impl MpcVerifier {
         if admin != &stored_admin {
             panic_with_error!(env, Error::Unauthorized);
         }
+        let cosigner_count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CosignerCount)
+            .unwrap_or(0);
+        // A threshold above the number of registered cosigners can never be
+        // met, so reject it instead of leaving the verifier unsatisfiable.
+        if threshold == 0 || threshold > cosigner_count {
+            panic_with_error!(&env, Error::InvalidThreshold);
+        }
+        env.storage().instance().set(&DataKey::Threshold, &threshold);
     }
 
     /// Return the configured threshold.

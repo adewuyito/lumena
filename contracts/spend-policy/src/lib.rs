@@ -26,6 +26,7 @@ pub enum Error {
     DelayNotElapsed = 7,
     TooManyEntries = 8,
     TimelockNotExpired = 9,
+    LimitIncreaseRejected = 10,
 }
 
 #[contracttype]
@@ -75,7 +76,9 @@ impl SpendPolicyContract {
     }
 
     /// Set the daily limit for (asset, account) immediately. Only the master
-    /// key may call this. Intended for initial configuration.
+    /// key may call this. Immediate increases are rejected: a limit may only
+    /// be set for the first time or lowered, so raises must go through the
+    /// timelocked [`Self::schedule_limit`] path.
     pub fn set_limit(
         env: Env,
         asset: Address,
@@ -87,9 +90,14 @@ impl SpendPolicyContract {
         if limit < 0 {
             return Err(Error::InvalidAmount);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::Limit(asset, account), &limit);
+        let key = DataKey::Limit(asset, account);
+        let current: Option<i128> = env.storage().persistent().get(&key);
+        if let Some(current) = current {
+            if limit > current {
+                return Err(Error::LimitIncreaseRejected);
+            }
+        }
+        env.storage().persistent().set(&key, &limit);
         Ok(())
     }
 
@@ -260,4 +268,5 @@ impl SpendPolicyContract {
     }
 }
 
+#[cfg(test)]
 mod test;
